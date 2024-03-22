@@ -1,3 +1,9 @@
+cosmic-edit (0.1.0ubuntu1) noble; urgency=medium
+
+  * Change to noble release and bump to get LP to take the package
+
+ -- Aaron Honeycutt <aaron@system76.com>  Fri, 22 Mar 2024 11:50:32 -0600
+
 cosmic-edit (0.1.0) jammy; urgency=medium
 
   * Initial release.
