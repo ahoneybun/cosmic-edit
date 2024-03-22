@@ -1,0 +1,3 @@
+name: Build source package
+   run: |
+     debuild -D -sa -Zxz
