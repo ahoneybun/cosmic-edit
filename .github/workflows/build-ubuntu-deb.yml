@@ -1,0 +1,11 @@
+name: Build Ubuntu packages
+on: push
+
+jobs:
+  build-debs:
+    runs-on: ubuntu-latest
+    steps:
+       - uses: sillsdev/gha-ubuntu-packaging@v1
+         with:
+            dist: 'jammy'
+            sourcepackage: ${{sourcepackage}}
