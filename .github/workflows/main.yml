@@ -1,4 +1,4 @@
-- name: Build Debian packages
+name: Build Debian packages
 uses: jtdor/build-deb-action@v1.7.0            
 on: push
 
