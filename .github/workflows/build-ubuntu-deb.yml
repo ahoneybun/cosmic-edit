@@ -11,4 +11,4 @@ jobs:
           DEB_BUILD_OPTIONS: noautodbgsym
         with:
           buildpackage-opts: --build=binary --no-sign
-          docker-image: ubuntu:latest
+          docker-image: ubuntu:devel
