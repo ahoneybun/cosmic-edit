@@ -317,12 +317,14 @@ pub enum Message {
     DefaultFontSize(usize),
     DialogMessage(DialogMessage),
     Find(Option<bool>),
+    FindCaseSensitive(bool),
     FindNext,
     FindPrevious,
     FindReplace,
     FindReplaceAll,
     FindReplaceValueChanged(String),
     FindSearchValueChanged(String),
+    FindUseRegex(bool),
     GitProjectStatus(Vec<(String, PathBuf, Vec<GitStatus>)>),
     Key(Modifiers, keyboard::Key),
     LaunchUrl(String),
@@ -1485,13 +1487,19 @@ impl Application for App {
             }
             Message::Cut => {
                 if let Some(Tab::Editor(tab)) = self.active_tab() {
-                    let mut editor = tab.editor.lock().unwrap();
-                    let selection_opt = editor.copy_selection();
-                    editor.start_change();
-                    editor.delete_selection();
-                    editor.finish_change();
+                    let selection_opt = {
+                        let mut editor = tab.editor.lock().unwrap();
+                        let selection_opt = editor.copy_selection();
+                        editor.start_change();
+                        editor.delete_selection();
+                        editor.finish_change();
+                        selection_opt
+                    };
                     if let Some(selection) = selection_opt {
-                        return clipboard::write(selection);
+                        return Command::batch([
+                            clipboard::write(selection),
+                            self.update(Message::TabChanged(self.tab_model.active())),
+                        ]);
                     }
                 }
             }
@@ -1556,10 +1564,27 @@ impl Application for App {
                 // Focus correct input
                 return self.update_focus();
             }
+            Message::FindCaseSensitive(find_case_sensitive) => {
+                self.config.find_case_sensitive = find_case_sensitive;
+                return self.save_config();
+            }
             Message::FindNext => {
                 if !self.find_search_value.is_empty() {
                     if let Some(Tab::Editor(tab)) = self.active_tab() {
-                        tab.search(&self.find_search_value, true);
+                        //TODO: do not compile find regex on every search?
+                        match self.config.find_regex(&self.find_search_value) {
+                            Ok(regex) => {
+                                tab.search(&regex, true);
+                            }
+                            Err(err) => {
+                                //TODO: put regex error in find box
+                                log::warn!(
+                                    "failed to compile regex {:?}: {}",
+                                    self.find_search_value,
+                                    err
+                                );
+                            }
+                        }
                     }
                 }
 
@@ -1569,7 +1594,20 @@ impl Application for App {
             Message::FindPrevious => {
                 if !self.find_search_value.is_empty() {
                     if let Some(Tab::Editor(tab)) = self.active_tab() {
-                        tab.search(&self.find_search_value, false);
+                        //TODO: do not compile find regex on every search?
+                        match self.config.find_regex(&self.find_search_value) {
+                            Ok(regex) => {
+                                tab.search(&regex, false);
+                            }
+                            Err(err) => {
+                                //TODO: put regex error in find box
+                                log::warn!(
+                                    "failed to compile regex {:?}: {}",
+                                    self.find_search_value,
+                                    err
+                                );
+                            }
+                        }
                     }
                 }
 
@@ -1579,7 +1617,22 @@ impl Application for App {
             Message::FindReplace => {
                 if !self.find_search_value.is_empty() {
                     if let Some(Tab::Editor(tab)) = self.active_tab() {
-                        tab.replace(&self.find_search_value, &self.find_replace_value);
+                        //TODO: do not compile find regex on every search?
+                        match self.config.find_regex(&self.find_search_value) {
+                            Ok(regex) => {
+                                //TODO: support captures
+                                tab.replace(&regex, &self.find_replace_value);
+                                return self.update(Message::TabChanged(self.tab_model.active()));
+                            }
+                            Err(err) => {
+                                //TODO: put regex error in find box
+                                log::warn!(
+                                    "failed to compile regex {:?}: {}",
+                                    self.find_search_value,
+                                    err
+                                );
+                            }
+                        }
                     }
                 }
 
@@ -1589,11 +1642,26 @@ impl Application for App {
             Message::FindReplaceAll => {
                 if !self.find_search_value.is_empty() {
                     if let Some(Tab::Editor(tab)) = self.active_tab() {
-                        {
-                            let mut editor = tab.editor.lock().unwrap();
-                            editor.set_cursor(cosmic_text::Cursor::new(0, 0));
+                        //TODO: do not compile find regex on every search?
+                        match self.config.find_regex(&self.find_search_value) {
+                            Ok(regex) => {
+                                //TODO: support captures
+                                {
+                                    let mut editor = tab.editor.lock().unwrap();
+                                    editor.set_cursor(cosmic_text::Cursor::new(0, 0));
+                                }
+                                while tab.replace(&regex, &self.find_replace_value) {}
+                                return self.update(Message::TabChanged(self.tab_model.active()));
+                            }
+                            Err(err) => {
+                                //TODO: put regex error in find box
+                                log::warn!(
+                                    "failed to compile regex {:?}: {}",
+                                    self.find_search_value,
+                                    err
+                                );
+                            }
                         }
-                        while tab.replace(&self.find_search_value, &self.find_replace_value) {}
                     }
                 }
 
@@ -1605,6 +1673,10 @@ impl Application for App {
             }
             Message::FindSearchValueChanged(value) => {
                 self.find_search_value = value;
+            }
+            Message::FindUseRegex(find_use_regex) => {
+                self.config.find_use_regex = find_use_regex;
+                return self.save_config();
             }
             Message::GitProjectStatus(project_status) => {
                 self.git_project_status = Some(project_status);
@@ -1828,10 +1900,13 @@ impl Application for App {
             }
             Message::PasteValue(value) => {
                 if let Some(Tab::Editor(tab)) = self.active_tab() {
-                    let mut editor = tab.editor.lock().unwrap();
-                    editor.start_change();
-                    editor.insert_string(&value, None);
-                    editor.finish_change();
+                    {
+                        let mut editor = tab.editor.lock().unwrap();
+                        editor.start_change();
+                        editor.insert_string(&value, None);
+                        editor.finish_change();
+                    }
+                    return self.update(Message::TabChanged(self.tab_model.active()));
                 }
             }
             Message::PrepareGitDiff(project_path, path, staged) => {
@@ -1910,8 +1985,12 @@ impl Application for App {
             }
             Message::Redo => {
                 if let Some(Tab::Editor(tab)) = self.active_tab() {
-                    let mut editor = tab.editor.lock().unwrap();
-                    editor.redo();
+                    {
+                        let mut editor = tab.editor.lock().unwrap();
+                        editor.redo();
+                    }
+
+                    return self.update(Message::TabChanged(self.tab_model.active()));
                 }
             }
             Message::Save => {
@@ -2032,7 +2111,9 @@ impl Application for App {
                 if let Some(Tab::Editor(tab)) = self.tab_model.data::<Tab>(entity) {
                     let mut title = tab.title();
                     //TODO: better way of adding change indicator
-                    title.push_str(" \u{2022}");
+                    if tab.changed() {
+                        title.push_str(" \u{2022}");
+                    }
                     self.tab_model.text_set(entity, title);
                 }
             }
@@ -2252,8 +2333,12 @@ impl Application for App {
             }
             Message::Undo => {
                 if let Some(Tab::Editor(tab)) = self.active_tab() {
-                    let mut editor = tab.editor.lock().unwrap();
-                    editor.undo();
+                    {
+                        let mut editor = tab.editor.lock().unwrap();
+                        editor.undo();
+                    }
+
+                    return self.update(Message::TabChanged(self.tab_model.active()));
                 }
             }
             Message::VimBindings(vim_bindings) => {
@@ -2480,7 +2565,7 @@ impl Application for App {
             .padding(space_xxs)
             .spacing(space_xxs);
 
-            let mut column = widget::column::with_capacity(2).push(find_widget);
+            let mut column = widget::column::with_capacity(3).push(find_widget);
             if *replace {
                 let replace_input = widget::text_input::text_input(
                     fl!("replace-placeholder"),
@@ -2524,6 +2609,26 @@ impl Application for App {
                 column = column.push(replace_widget);
             }
 
+            column = column.push(
+                widget::row::with_children(vec![
+                    widget::checkbox(
+                        fl!("case-sensitive"),
+                        self.config.find_case_sensitive,
+                        Message::FindCaseSensitive,
+                    )
+                    .into(),
+                    widget::checkbox(
+                        fl!("use-regex"),
+                        self.config.find_use_regex,
+                        Message::FindUseRegex,
+                    )
+                    .into(),
+                ])
+                .align_items(Alignment::Center)
+                .padding(space_xxs)
+                .spacing(space_xxs),
+            );
+
             tab_column = tab_column
                 .push(widget::layer_container(column).layer(cosmic_theme::Layer::Primary));
         }
@@ -2549,9 +2654,12 @@ impl Application for App {
         struct ThemeSubscription;
 
         subscription::Subscription::batch([
-            event::listen_with(|event, _status| match event {
+            event::listen_with(|event, status| match event {
                 event::Event::Keyboard(keyboard::Event::KeyPressed { modifiers, key, .. }) => {
-                    Some(Message::Key(modifiers, key))
+                    match status {
+                        event::Status::Ignored => Some(Message::Key(modifiers, key)),
+                        event::Status::Captured => None,
+                    }
                 }
                 event::Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) => {
                     Some(Message::Modifiers(modifiers))
