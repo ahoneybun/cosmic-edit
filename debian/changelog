@@ -1,3 +1,9 @@
+cosmic-edit (0.1.0ubuntu2) noble; urgency=medium
+
+  * Resync with master
+
+ -- Aaron Honeycutt <aaron@system76.com>  Fri, 29 Mar 2024 11:11:33 -0600
+
 cosmic-edit (0.1.0ubuntu1) noble; urgency=medium
 
   * Change to noble release and bump to get LP to take the package
